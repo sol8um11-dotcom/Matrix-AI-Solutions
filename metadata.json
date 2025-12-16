@@ -1,0 +1,5 @@
+{
+  "name": "AI Academic Concept Tagger",
+  "description": "An advanced academic content tagging tool using Gemini to map questions to curriculum concepts.",
+  "requestFramePermissions": []
+}
