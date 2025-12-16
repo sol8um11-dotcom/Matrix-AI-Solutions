@@ -17,6 +17,9 @@ export interface TaggingResult {
 export interface ProcessingState {
   isLoading: boolean;
   statusMessage: string;
+  progress: number; // 0 to 100
+  total: number;
+  processed: number;
   error?: string;
 }
 

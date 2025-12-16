@@ -11,6 +11,91 @@ export const readFileContent = (file: File): Promise<string> => {
   });
 };
 
+// Robust CSV Parser for Input Files
+// Handles quoted fields with delimiters and newlines
+export const parseRawQuestions = (rawText: string, fileName: string): any[] => {
+  if (fileName.endsWith('.json')) {
+    try {
+      const data = JSON.parse(rawText);
+      return Array.isArray(data) ? data : [];
+    } catch (e) {
+      console.error("JSON Parse Error", e);
+      return [];
+    }
+  }
+
+  // Detect delimiter
+  const detectDelimiter = (text: string) => {
+    const firstLine = text.substring(0, text.indexOf('\n') > -1 ? text.indexOf('\n') : text.length);
+    const commas = (firstLine.match(/,/g) || []).length;
+    const pipes = (firstLine.match(/\|/g) || []).length;
+    const tabs = (firstLine.match(/\t/g) || []).length;
+    if (pipes > commas && pipes > tabs) return '|';
+    if (tabs > commas && tabs > pipes) return '\t';
+    return ',';
+  };
+
+  const delimiter = detectDelimiter(rawText);
+  const rows: string[][] = [];
+  let currentRow: string[] = [];
+  let currentField = '';
+  let insideQuotes = false;
+
+  // State machine parser
+  for (let i = 0; i < rawText.length; i++) {
+    const char = rawText[i];
+    const nextChar = rawText[i + 1];
+
+    if (char === '"') {
+      if (insideQuotes && nextChar === '"') {
+        // Escaped quote: "" -> "
+        currentField += '"';
+        i++; // skip next quote
+      } else {
+        // Toggle quotes
+        insideQuotes = !insideQuotes;
+      }
+    } else if (char === delimiter && !insideQuotes) {
+      // End of field
+      currentRow.push(currentField);
+      currentField = '';
+    } else if ((char === '\r' || char === '\n') && !insideQuotes) {
+      // End of row
+      if (char === '\r' && nextChar === '\n') i++; // Handle CRLF
+      
+      currentRow.push(currentField);
+      rows.push(currentRow);
+      currentRow = [];
+      currentField = '';
+    } else {
+      currentField += char;
+    }
+  }
+  
+  // Handle last row if no newline at EOF
+  if (currentRow.length > 0 || currentField.length > 0) {
+    currentRow.push(currentField);
+    rows.push(currentRow);
+  }
+
+  // Filter out empty rows (often caused by trailing newlines)
+  const validRows = rows.filter(r => r.length > 0 && r.some(c => c.trim().length > 0));
+
+  if (validRows.length < 2) return [];
+
+  // Extract headers
+  const headers = validRows[0].map(h => h.trim());
+  
+  // Map rows to objects
+  return validRows.slice(1).map(row => {
+    const obj: any = {};
+    headers.forEach((h, i) => {
+      obj[h] = row[i] || '';
+    });
+    return obj;
+  });
+};
+
 export const parseCSVToJSON = (rawText: string): TaggingResult[] => {
   // Normalize newlines and clean up
   const cleanText = rawText.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
@@ -23,27 +108,20 @@ export const parseCSVToJSON = (rawText: string): TaggingResult[] => {
   let dataStartIndex = 0;
 
   // 1. Attempt to find a header row
-  // Regex looks for 'Question' followed eventually by 'ID', case insensitive. 
-  // Matches "QuestionID", "Question ID", "Question_ID"
   const headerRowIndex = lines.findIndex(line => 
     /question[\s_]*id/i.test(line) && line.includes('|')
   );
 
   if (headerRowIndex !== -1) {
-      // Header found
       const headerLine = lines[headerRowIndex].replace(/^\||\|$/g, '');
       headers = headerLine.split('|').map(h => h.trim().replace(/^"|"$/g, ''));
       dataStartIndex = headerRowIndex + 1;
   } else {
-      // No header found. 
-      // Check if we have data that looks like it fits (contains pipes).
       const hasPipes = lines.some(l => l.includes('|'));
       if (!hasPipes) {
-          console.error("Parser Error: No pipe delimiters found in response.");
+          console.warn("Parser Warning: No pipe delimiters found in response chunk.");
           return [];
       }
-      console.warn("No header row found. Assuming default headers.");
-      // Start from index 0
       dataStartIndex = 0;
   }
 
@@ -53,27 +131,22 @@ export const parseCSVToJSON = (rawText: string): TaggingResult[] => {
   for (let i = dataStartIndex; i < lines.length; i++) {
     let line = lines[i];
     
-    // Skip divider lines (e.g. "---|---|---" or "|---|")
-    // If line only contains |, -, and whitespace
+    // Skip divider lines
     if (/^[|\-\s]+$/.test(line)) continue;
-    
-    // Also skip if it looks like a repeated header row
     if (/question[\s_]*id/i.test(line)) continue;
 
     // Remove starting/ending pipes
     line = line.replace(/^\||\|$/g, '');
     
+    // We assume the AI respects the "no pipes in content" rule, so simple split is safe enough for the output format
+    // However, we handle potential extra spaces
     const values = line.split('|').map(v => v.trim());
 
-    // Basic validation: ensure we have at least 2 columns to consider it a data row
-    // (e.g. QuestionID and Text)
     if (values.length < 2) continue;
 
     const entry: any = {};
     headers.forEach((header, index) => {
       let val = values[index] || '';
-      // Clean up common issues:
-      // 1. Leading/trailing quotes if the model wrapped the cell content
       val = val.replace(/^"|"$/g, '');
       entry[header] = val;
     });
@@ -89,15 +162,12 @@ export const downloadCSV = (data: TaggingResult[], filename: string) => {
   
   const headers = Object.keys(data[0]);
   
-  // Convert back to standard Comma Separated Values for the user download
   const csvContent = [
     headers.join(','),
     ...data.map(row => 
       headers.map(fieldName => {
         const val = row[fieldName] || '';
-        // Escape quotes by doubling them
         const stringVal = String(val).replace(/"/g, '""');
-        // Wrap in quotes
         return `"${stringVal}"`;
       }).join(',')
     )

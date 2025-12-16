@@ -1,9 +1,9 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState } from 'react';
 import { FileUpload } from './components/FileUpload';
 import { ContextFileType, FileData, TaggingResult, ProcessingState } from './types';
-import { readFileContent, parseCSVToJSON, downloadCSV } from './utils/fileHelpers';
+import { readFileContent, parseCSVToJSON, downloadCSV, parseRawQuestions } from './utils/fileHelpers';
 import { tagQuestionsWithGemini } from './services/geminiService';
-import { BrainCircuit, Download, RefreshCw, AlertTriangle, Play, FileJson } from 'lucide-react';
+import { BrainCircuit, Download, RefreshCw, AlertTriangle, Play, FileJson, Layers } from 'lucide-react';
 
 const App: React.FC = () => {
   // Context Files State
@@ -22,6 +22,9 @@ const App: React.FC = () => {
   const [processing, setProcessing] = useState<ProcessingState>({
     isLoading: false,
     statusMessage: '',
+    progress: 0,
+    total: 0,
+    processed: 0
   });
 
   // Handlers for Context Files
@@ -61,29 +64,80 @@ const App: React.FC = () => {
       return;
     }
 
-    setProcessing({ isLoading: true, statusMessage: 'Preparing data...' });
-    setResults([]);
+    // 1. Parse Input First
+    setProcessing({ 
+      isLoading: true, 
+      statusMessage: 'Parsing input data...', 
+      progress: 0,
+      total: 0,
+      processed: 0
+    });
 
+    const parsedQuestions = parseRawQuestions(questionsFile.content, questionsFile.name);
+    
+    if (parsedQuestions.length === 0) {
+      setProcessing({ 
+        isLoading: false, 
+        statusMessage: '', 
+        progress: 0, total: 0, processed: 0,
+        error: "Could not parse any questions from the input file. Check format." 
+      });
+      return;
+    }
+
+    setResults([]);
+    
     try {
-      setProcessing({ isLoading: true, statusMessage: 'AI is analyzing semantic vectors and tagging concepts...' });
+      const total = parsedQuestions.length;
+      setProcessing({ 
+        isLoading: true, 
+        statusMessage: 'Initializing batch processing with Gemini 3 Pro...',
+        progress: 0,
+        total,
+        processed: 0
+      });
+
+      // 2. Run Batch Processing
+      const rawBatchResults = await tagQuestionsWithGemini(
+        contextFiles, 
+        parsedQuestions,
+        (processed, total) => {
+          setProcessing(prev => ({
+            ...prev,
+            processed,
+            total,
+            progress: Math.round((processed / total) * 100),
+            statusMessage: `Processing batch: ${processed}/${total} questions...`
+          }));
+        }
+      );
       
-      const rawCSV = await tagQuestionsWithGemini(contextFiles, questionsFile.content);
+      setProcessing(prev => ({ ...prev, statusMessage: 'Aggregating and parsing results...' }));
       
-      setProcessing({ isLoading: true, statusMessage: 'Parsing results...' });
-      const parsedData = parseCSVToJSON(rawCSV);
+      // 3. Aggregate Results
+      let allParsedRows: TaggingResult[] = [];
+      rawBatchResults.forEach(raw => {
+        const rows = parseCSVToJSON(raw);
+        allParsedRows = [...allParsedRows, ...rows];
+      });
       
-      if (parsedData.length === 0) {
-        throw new Error("Parsed 0 rows. The AI response format was likely invalid.");
+      if (allParsedRows.length === 0) {
+        throw new Error("AI processed the data but returned no valid rows. Try a smaller dataset.");
       }
 
-      setResults(parsedData);
-      setProcessing({ isLoading: false, statusMessage: 'Done!' });
+      setResults(allParsedRows);
+      setProcessing({ 
+        isLoading: false, 
+        statusMessage: 'Done!',
+        progress: 100, total, processed: total 
+      });
 
     } catch (error: any) {
       console.error("Tagging failed:", error);
       setProcessing({ 
         isLoading: false, 
         statusMessage: '', 
+        progress: 0, total: 0, processed: 0,
         error: error.message || "An unexpected error occurred." 
       });
     }
@@ -95,11 +149,8 @@ const App: React.FC = () => {
 
   const getConfidenceColor = (scoreStr: string | undefined) => {
     if (!scoreStr) return "bg-slate-100 text-slate-600 border-slate-200";
-    
-    // Defensive parsing
     const cleaned = String(scoreStr).replace('%', '').trim();
     const score = parseInt(cleaned, 10);
-    
     if (isNaN(score)) return "bg-slate-100 text-slate-600 border-slate-200";
     if (score >= 90) return "bg-emerald-100 text-emerald-700 border-emerald-200";
     if (score >= 70) return "bg-yellow-100 text-yellow-700 border-yellow-200";
@@ -162,11 +213,10 @@ const App: React.FC = () => {
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
               <div>
                 <h2 className="text-lg font-semibold text-slate-800">2. Upload & Process Questions</h2>
-                <p className="text-sm text-slate-500">Upload your JSON or CSV question bank to begin.</p>
+                <p className="text-sm text-slate-500">Upload your JSON or CSV question bank (Supports 1000+ items).</p>
               </div>
               
               <div className="flex items-center gap-3">
-                 {/* Upload Questions Trigger */}
                  <div className="w-full md:w-64">
                     <FileUpload 
                       label="Question Bank" 
@@ -179,25 +229,42 @@ const App: React.FC = () => {
             </div>
 
             {/* Action Bar */}
-            <div className="mt-6 flex items-center justify-between bg-slate-50 p-3 rounded-lg border border-slate-200">
-               <div className="flex items-center gap-2 text-sm text-slate-600">
-                 {processing.isLoading ? (
-                    <span className="flex items-center gap-2 text-indigo-600 font-medium">
-                      <RefreshCw className="animate-spin" size={16} />
-                      {processing.statusMessage}
-                    </span>
-                 ) : processing.error ? (
-                    <span className="flex items-center gap-2 text-red-600 font-medium">
-                      <AlertTriangle size={16} />
-                      {processing.error}
-                    </span>
-                 ) : results.length > 0 ? (
-                    <span className="flex items-center gap-2 text-emerald-600 font-medium">
-                      <BrainCircuit size={16} />
-                      Processed {results.length} questions successfully.
-                    </span>
-                 ) : (
-                   <span>Ready to process.</span>
+            <div className="mt-6 flex flex-col md:flex-row items-center justify-between bg-slate-50 p-3 rounded-lg border border-slate-200 gap-4">
+               
+               {/* Status Area with Progress Bar */}
+               <div className="flex-1 w-full">
+                 <div className="flex items-center gap-2 text-sm text-slate-600 mb-2">
+                   {processing.isLoading ? (
+                      <span className="flex items-center gap-2 text-indigo-600 font-medium">
+                        <RefreshCw className="animate-spin" size={16} />
+                        {processing.statusMessage}
+                      </span>
+                   ) : processing.error ? (
+                      <span className="flex items-center gap-2 text-red-600 font-medium">
+                        <AlertTriangle size={16} />
+                        {processing.error}
+                      </span>
+                   ) : results.length > 0 ? (
+                      <span className="flex items-center gap-2 text-emerald-600 font-medium">
+                        <BrainCircuit size={16} />
+                        Processed {results.length} questions successfully.
+                      </span>
+                   ) : (
+                     <span className="flex items-center gap-2">
+                       <Layers size={16} />
+                       Ready to process.
+                     </span>
+                   )}
+                 </div>
+                 
+                 {/* Progress Bar */}
+                 {processing.isLoading && (
+                    <div className="w-full bg-slate-200 rounded-full h-2.5">
+                      <div 
+                        className="bg-indigo-600 h-2.5 rounded-full transition-all duration-500 ease-out" 
+                        style={{ width: `${processing.progress}%` }}
+                      ></div>
+                    </div>
                  )}
                </div>
 
@@ -215,7 +282,7 @@ const App: React.FC = () => {
                    onClick={startTagging}
                    disabled={processing.isLoading || !questionsFile}
                    className={`
-                     flex items-center gap-2 px-6 py-2 rounded-md text-white font-medium shadow-md transition-all
+                     flex items-center gap-2 px-6 py-2 rounded-md text-white font-medium shadow-md transition-all whitespace-nowrap
                      ${processing.isLoading || !questionsFile 
                        ? 'bg-slate-400 cursor-not-allowed' 
                        : 'bg-indigo-600 hover:bg-indigo-700 hover:shadow-lg'
@@ -223,7 +290,7 @@ const App: React.FC = () => {
                    `}
                  >
                    <Play size={16} fill="currentColor" />
-                   Start Tagging
+                   {processing.isLoading ? 'Processing...' : 'Start Tagging'}
                  </button>
                </div>
             </div>
@@ -284,7 +351,8 @@ const App: React.FC = () => {
                 </div>
                 <h3 className="text-lg font-medium text-slate-600">No Results Yet</h3>
                 <p className="max-w-md text-center mt-2">
-                  Upload your files and click "Start Tagging" to see the AI analysis here.
+                  Upload your files and click "Start Tagging".<br/>
+                  <span className="text-xs text-slate-400">Supports batch processing for large datasets.</span>
                 </p>
               </div>
             )}

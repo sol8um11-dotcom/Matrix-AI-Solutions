@@ -33,22 +33,27 @@ You have access to the curriculum structure defined in the uploaded files:
 **Step 4: Few-Shot Examples (Pattern Matching Guide)**
 Use these examples to understand the required depth of reasoning and output format. Note the use of PIPE (|) delimiter.
 
-*Example 1 (Physics - Direct Mapping)*
-Input: {"id": "P101", "subject": "Physics", "chapter": "Electrostatics", "text": "Two point charges q1 and q2 are separated by distance r. What is the force between them?"}
-Output: P101|Two point charges q1 and q2 are separated by distance r. What is the force between them?|Physics|Electrostatics|Coulomb's Law|98%|Direct application of force formula between point charges.
+*Example 1 (Physics - Story/Word Problem)*
+Input: {"id": "P_Story_1", "subject": "Physics", "chapter": "Kinematics", "text": "A cricketer hits a ball at an angle of 30 degrees with a speed of 20 m/s. The ball travels through the air and lands on the roof of a building."}
+Output: P_Story_1|A cricketer hits a ball at an angle of 30 degrees...|Physics|Kinematics|Projectile Motion Equation of Trajectory|99%|Extracted core physics: object launched at angle under gravity. Narrative details (cricketer, roof) are irrelevant to the concept.
 
-*Example 2 (Math - Formula Recognition)*
-Input: {"id": "M205", "subject": "Mathematics", "chapter": "Definite Integration", "text": "Evaluate integral from 0 to pi/2 of sin(x)/(sin(x)+cos(x)) dx."}
-Output: M205|Evaluate integral from 0 to pi/2 of sin(x)/(sin(x)+cos(x)) dx.|Mathematics|Definite Integration|King's Property (a to b f(x) = f(a+b-x))|95%|Standard form requiring the property f(x) = f(a+b-x) to simplify the denominator.
+*Example 2 (Math - Formula/LaTeX Recognition)*
+Input: {"id": "M_Calc_2", "subject": "Mathematics", "chapter": "Differential Equations", "text": "Solve the differential equation dy/dx + P(x)y = Q(x)."}
+Output: M_Calc_2|Solve the differential equation dy/dx + P(x)y = Q(x).|Mathematics|Differential Equations|Linear Differential Equations (Integrating Factor)|98%|Identified standard linear form dy/dx + Py = Q, which requires the Integrating Factor method.
 
-*Example 3 (Physics - Context Shielding)*
-Input: {"id": "P309", "subject": "Physics", "chapter": "Work Power Energy", "text": "A block slides down a rough incline of angle theta. Calculate the work done by the friction force."}
-Output: P309|A block slides down a rough incline of angle theta. Calculate the work done by the friction force.|Physics|Work Power Energy|Work Done by Constant Force|85%|The question asks for Work Calculation. Friction is just the specific force agent, but the concept is calculating work.
+*Example 3 (Physics - Diagram/Image Inference)*
+Input: {"id": "P_Img_3", "subject": "Physics", "chapter": "Laws of Motion", "text": "In the adjacent figure, a block of mass m is connected to a pulley system. If the string is massless..."}
+Output: P_Img_3|In the adjacent figure, a block of mass m is connected...|Physics|Laws of Motion|Constraint Relations (Pulley & String)|96%|Reference to 'pulley system' and 'string' implies constraint motion analysis, even without seeing the image.
+
+*Example 4 (Chemistry - Reaction Mechanism)*
+Input: {"id": "C_Org_4", "subject": "Chemistry", "chapter": "Aldehydes and Ketones", "text": "Which of the following undergoes Aldol condensation?"}
+Output: C_Org_4|Which of the following undergoes Aldol condensation?|Chemistry|Aldehydes and Ketones|Aldol Condensation Mechanism|99%|Direct question asking for a specific named reaction mechanism.
 
 **Step 5: Output Generation**
 - Return the output as a **PIPE-SEPARATED (|)** list.
 - Columns: \`QuestionID\`, \`Original_Text\`, \`Tagged_Subject\`, \`Tagged_Chapter\`, \`Tagged_Concept\`, \`Confidence_Score\`, \`Reasoning\`.
-- **Constraint:** Ensure no pipe characters (|) exist within the content of any field. Replace them with hyphens (-) or commas (,) if necessary to prevent data parsing errors.
+- **Constraint 1:** Ensure no pipe characters (|) exist within the content of any field. Replace them with hyphens (-) or commas (,) if necessary.
+- **Constraint 2:** **DO NOT** use newlines within any cell/field. Replace newlines in the text or reasoning with spaces. Each question must correspond to exactly one line of text in the output.
 
 **Input Format:**
 User will provide a JSON/CSV list of questions.
